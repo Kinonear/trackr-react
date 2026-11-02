@@ -4,40 +4,89 @@ import Stats from "./components/Stats.jsx";
 import FilterBar from "./components/FilterBar.jsx";
 import ApplicationList from "./components/ApplicationList.jsx";
 import ApplicationFormDialog from "./components/ApplicationFormDialog.jsx";
-import { loadApplications, saveApplications } from "./lib/storage.js";
+import { supabase } from "./lib/supabase.js";
+import { useAuth } from "./contexts/AuthContext.jsx";
 
 export default function App() {
-  // Lazy initializer: loadApplications runs once, on first render.
-  const [applications, setApplications] = useState(loadApplications);
-  const [currentFilter, setCurrentFilter] = useState("All");
+  const { user, signOut } = useAuth();
 
-  // null = dialog closed. { app: null } = create. { app: someApp } = edit.
+  const [applications, setApplications] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [currentFilter, setCurrentFilter] = useState("All");
   const [dialog, setDialog] = useState(null);
 
-  // Any time applications changes, save it. Runs after render.
+  // Load this user's applications whenever the user changes.
   useEffect(() => {
-    saveApplications(applications);
-  }, [applications]);
+    if (!user) return;
+    let cancelled = false;
 
-  function handleSave(data) {
-    setApplications((prev) => {
-      if (dialog?.app) {
-        return prev.map((a) => (a.id === dialog.app.id ? { ...a, ...data } : a));
+    (async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("applications")
+        .select("*")
+        .order("date", { ascending: false });
+
+      if (cancelled) return;
+      if (error) {
+        setError(error.message);
+      } else {
+        setApplications(data ?? []);
       }
-      return [{ id: crypto.randomUUID(), ...data }, ...prev];
-    });
+      setLoading(false);
+    })();
+
+    return () => { cancelled = true; };
+  }, [user]);
+
+  async function handleSave(data) {
+    if (dialog?.app) {
+      // Update
+      const { error } = await supabase
+        .from("applications")
+        .update(data)
+        .eq("id", dialog.app.id);
+      if (error) { setError(error.message); return; }
+      setApplications((prev) =>
+        prev.map((a) => (a.id === dialog.app.id ? { ...a, ...data } : a))
+      );
+    } else {
+      // Insert — note user_id is required and must match the auth user.
+      const { data: inserted, error } = await supabase
+        .from("applications")
+        .insert({ ...data, user_id: user.id })
+        .select()
+        .single();
+      if (error) { setError(error.message); return; }
+      setApplications((prev) => [inserted, ...prev]);
+    }
     setDialog(null);
   }
 
-  function handleDelete(id) {
+  async function handleDelete(id) {
     const app = applications.find((a) => a.id === id);
     if (!app) return;
     if (!confirm(`Delete "${app.role}" at ${app.company}?`)) return;
+
+    const { error } = await supabase.from("applications").delete().eq("id", id);
+    if (error) { setError(error.message); return; }
     setApplications((prev) => prev.filter((a) => a.id !== id));
   }
 
+  if (loading) return <p className="app-loading">Loading…</p>;
+
   return (
     <div className="app">
+      <div className="app-topbar">
+        <span className="app-user">{user.email}</span>
+        <button className="btn btn-ghost" type="button" onClick={signOut}>
+          Sign out
+        </button>
+      </div>
+
+      {error && <p className="app-error">{error}</p>}
+
       <Header onAdd={() => setDialog({ app: null })} />
       <Stats applications={applications} />
       <FilterBar current={currentFilter} onChange={setCurrentFilter} />

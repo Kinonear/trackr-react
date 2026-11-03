@@ -74,7 +74,13 @@ export default function App() {
     setApplications((prev) => prev.filter((a) => a.id !== id));
   }
 
-  if (loading) return <p className="app-loading">Loading…</p>;
+  if (loading) {
+  return (
+    <div className="app">
+      <p className="app-loading">Loading your applications…</p>
+    </div>
+  );
+}
 
   return (
     <div className="app">
